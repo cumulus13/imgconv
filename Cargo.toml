@@ -1,0 +1,45 @@
+bin = [
+    { name = "imgconv", path = "src/main.rs" },
+]
+
+[package]
+name = "imgconv"
+version = "0.1.1"
+edition = "2021"
+authors = [
+    "Hadi Cahyadi <cumulus13@gmail.com>",
+]
+description = "A professional command-line tool for converting images between different formats"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/cumulus13/imgconv"
+homepage = "https://github.com/cumulus13/imgconv"
+keywords = [
+    "image",
+    "converter",
+    "cli",
+    "format",
+    "conversion",
+]
+categories = [
+    "command-line-utilities",
+    "multimedia::images",
+]
+readme = "README.md"
+
+[dependencies]
+image = "0.25"
+anyhow = "1.0"
+colored = "2.1"
+clap-version-flag = "1.0.7"
+
+[dependencies.clap]
+version = "4.5"
+features = [
+    "derive",
+    "cargo",
+]
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
