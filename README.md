@@ -2,8 +2,9 @@
 
 [![Crates.io](https://img.shields.io/crates/v/imgconv.svg)](https://crates.io/crates/imgconv)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
-[![Build Status](https://img.shields.io/github/workflow/status/cumulus13/imgconv/CI)](https://github.com/cumulus13/imgconv/actions)
+[![CI](https://github.com/cumulus13/imgconv/workflows/CI/badge.svg)](https://github.com/cumulus13/imgconv/actions)
 [![Release](https://github.com/cumulus13/imgconv/workflows/Release/badge.svg)](https://github.com/cumulus13/imgconv/actions)
+
 
 A professional, fast, and reliable command-line tool for converting images between different formats.
 
