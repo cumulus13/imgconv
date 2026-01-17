@@ -1,0 +1,88 @@
+# .github/workflows/pr-check.yml
+name: PR Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  quick-check:
+    name: Quick Check
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: pr-check-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            pr-check-
+
+      - name: Check compilation
+        continue-on-error: false
+        run: cargo check --all-targets
+
+      - name: Run quick tests
+        continue-on-error: true
+        run: cargo test --lib --bins
+
+  size-check:
+    name: Binary Size Check
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release
+        continue-on-error: true
+        run: cargo build --release
+
+      - name: Check binary size
+        continue-on-error: true
+        run: |
+          SIZE=$(stat -f%z target/release/imgconv 2>/dev/null || stat -c%s target/release/imgconv 2>/dev/null || echo "0")
+          SIZE_MB=$((SIZE / 1024 / 1024))
+          echo "Binary size: ${SIZE_MB}MB"
+          if [ $SIZE_MB -gt 50 ]; then
+            echo "::warning::Binary size is larger than 50MB"
+          fi
+
+  dependency-check:
+    name: Dependency Check
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check for outdated dependencies
+        continue-on-error: true
+        run: |
+          cargo install cargo-outdated || true
+          cargo outdated || true
+
+      - name: Check licenses
+        continue-on-error: true
+        run: |
+          cargo install cargo-license || true
+          cargo license --json || true
