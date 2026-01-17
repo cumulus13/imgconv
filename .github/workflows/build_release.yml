@@ -1,0 +1,175 @@
+# .github/workflows/release.yml
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: Get version from tag
+        id: get_version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+  build:
+    name: Build - ${{ matrix.platform.os_name }}
+    needs: create-release
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          # Linux x86_64
+          - os: ubuntu-20.04
+            os_name: Linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            bin: imgconv
+            name: imgconv-Linux-x86_64.tar.gz
+            
+          # Linux x86_64 musl (static)
+          - os: ubuntu-20.04
+            os_name: Linux-x86_64-musl
+            target: x86_64-unknown-linux-musl
+            bin: imgconv
+            name: imgconv-Linux-x86_64-musl.tar.gz
+            
+          # Linux aarch64
+          - os: ubuntu-20.04
+            os_name: Linux-aarch64
+            target: aarch64-unknown-linux-gnu
+            bin: imgconv
+            name: imgconv-Linux-aarch64.tar.gz
+            
+          # macOS x86_64
+          - os: macOS-latest
+            os_name: macOS-x86_64
+            target: x86_64-apple-darwin
+            bin: imgconv
+            name: imgconv-Darwin-x86_64.tar.gz
+            
+          # macOS aarch64 (Apple Silicon)
+          - os: macOS-latest
+            os_name: macOS-aarch64
+            target: aarch64-apple-darwin
+            bin: imgconv
+            name: imgconv-Darwin-aarch64.tar.gz
+            
+          # Windows x86_64
+          - os: windows-latest
+            os_name: Windows-x86_64
+            target: x86_64-pc-windows-msvc
+            bin: imgconv.exe
+            name: imgconv-Windows-x86_64.zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      - name: Install cross-compilation tools (Linux)
+        if: matrix.platform.os == 'ubuntu-20.04'
+        run: |
+          if [ "${{ matrix.platform.target }}" = "x86_64-unknown-linux-musl" ]; then
+            sudo apt-get update
+            sudo apt-get install -y musl-tools
+          elif [ "${{ matrix.platform.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            sudo apt-get update
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+          fi
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build binary
+        run: cargo build --release --locked --target ${{ matrix.platform.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Strip binary (Linux and macOS)
+        if: matrix.platform.os != 'windows-latest'
+        run: |
+          strip target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }}
+
+      - name: Package as archive (Linux and macOS)
+        if: matrix.platform.os != 'windows-latest'
+        run: |
+          cd target/${{ matrix.platform.target }}/release
+          tar czvf ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }}
+          cd -
+
+      - name: Package as archive (Windows)
+        if: matrix.platform.os == 'windows-latest'
+        run: |
+          cd target/${{ matrix.platform.target }}/release
+          7z a ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }}
+          cd -
+
+      - name: Generate SHA-256
+        run: |
+          if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
+            certutil -hashfile ${{ matrix.platform.name }} SHA256 > ${{ matrix.platform.name }}.sha256
+          else
+            shasum -a 256 ${{ matrix.platform.name }} > ${{ matrix.platform.name }}.sha256
+          fi
+        shell: bash
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./${{ matrix.platform.name }}
+          asset_name: ${{ matrix.platform.name }}
+          asset_content_type: application/gzip
+
+      - name: Upload SHA-256
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./${{ matrix.platform.name }}.sha256
+          asset_name: ${{ matrix.platform.name }}.sha256
+          asset_content_type: text/plain
