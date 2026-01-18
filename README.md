@@ -5,13 +5,13 @@
 [![CI](https://github.com/cumulus13/imgconv/workflows/CI/badge.svg)](https://github.com/cumulus13/imgconv/actions)
 [![Release](https://github.com/cumulus13/imgconv/workflows/Release/badge.svg)](https://github.com/cumulus13/imgconv/actions)
 
-
 A professional, fast, and reliable command-line tool for converting images between different formats.
 
 ## Features
 
 - 🚀 **Fast & Efficient** - Built with Rust for maximum performance
 - 🎨 **Multiple Formats** - Supports PNG, JPEG, GIF, BMP, ICO, TIFF, WebP, AVIF, and more
+- 📋 **Clipboard Support** - Paste images directly from clipboard (IrfanView, GIMP, browsers, etc.)
 - 🔧 **Flexible CLI** - Multiple input methods (flags or positional arguments)
 - 📦 **Smart Detection** - Automatically detects output format from file extension
 - 🎯 **Quality Control** - Adjustable quality settings for lossy formats
@@ -67,6 +67,32 @@ Specify quality for lossy formats (1-100, default: 90):
 imgconv input.png output.jpg -q 85
 ```
 
+### Clipboard Support
+
+**Paste from clipboard** (works with IrfanView, GIMP, Photoshop, browsers, etc.):
+
+```bash
+# Auto-detect format from clipboard
+imgconv -c output_image
+# Output: output_image.png (or detected format)
+
+# Specify output extension (auto-corrects if mismatch)
+imgconv -c output_image.png
+# If clipboard is JPG → auto-corrects to output_image.jpg
+
+# Force conversion to specific format
+imgconv -c output_image -e jpg
+# Clipboard PNG → converts to output_image.jpg
+
+imgconv -c output_image.png -e webp
+# Any clipboard format → converts to output_image.webp
+```
+
+**Clipboard behavior:**
+- Without `-e`: Auto-detects format and corrects extension if needed
+- With `-e`: Forces conversion to specified format
+- Smart extension correction prevents format mismatches
+
 ### Force Output Format
 
 When output filename doesn't have an extension:
@@ -119,6 +145,21 @@ imgconv -i input.avif -o output.png -f png -q 100
 
 ```bash
 imgconv photo.webp photo.png
+```
+
+### Paste from Clipboard (IrfanView, etc.)
+
+Copy image in any image viewer (IrfanView, GIMP, browser), then:
+
+```bash
+# Save as detected format
+imgconv -c my_image
+
+# Save as PNG
+imgconv -c screenshot.png
+
+# Convert clipboard to JPEG
+imgconv -c photo -e jpg -q 85
 ```
 
 ### Batch Conversion
@@ -175,14 +216,16 @@ Arguments:
   [OUTPUT]  Positional output file (alternative to -o)
 
 Options:
-  -i, --input <FILE>     Input image file
-  -o, --output <FILE>    Output image file or directory
-  -f, --format <FORMAT>  Output format (auto-detected from extension if not specified)
-                         [possible values: png, jpeg, jpg, gif, bmp, ico, tiff, tif, 
-                          webp, avif, pnm, tga, dds, hdr, farbfeld]
-  -q, --quality <NUM>    Quality for lossy formats like JPEG (1-100) [default: 90]
-  -V, --version          Print version information
-  -h, --help             Print help
+  -i, --input <FILE>       Input image file (conflicts with -c)
+  -o, --output <FILE>      Output image file or directory
+  -c, --clipboard          Paste image from clipboard
+  -f, --format <FORMAT>    Output format (auto-detected from extension if not specified)
+                           [possible values: png, jpeg, jpg, gif, bmp, ico, tiff, tif, 
+                            webp, avif, pnm, tga, dds, hdr, farbfeld]
+  -e, --extension <EXT>    Extension for output file (use with -c for conversion)
+  -q, --quality <NUM>      Quality for lossy formats like JPEG (1-100) [default: 90]
+  -V, --version            Print version information
+  -h, --help               Print help
 ```
 
 ## Performance
