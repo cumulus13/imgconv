@@ -6,7 +6,7 @@
 
 use clap::{Parser, ValueEnum, ArgAction};
 use clap_version_flag::colorful_version;
-use image::{ImageFormat, ImageReader, GenericImageView};
+use image::{ImageFormat, ImageReader, GenericImageView, DynamicImage};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use colored::*;
@@ -29,6 +29,16 @@ EXAMPLES:
     
     # Force output format
     imgconv input.jpg output -f png
+    
+    # Paste from clipboard
+    imgconv -c output_image
+    
+    # Paste from clipboard with specific extension
+    imgconv -c output_image.png
+    
+    # Paste and convert to specific format
+    imgconv -c output_image -e jpg
+    imgconv -c output_image.png -e jpg
     
     # Batch conversion pattern
     for f in *.webp; do imgconv \"$f\" \"${f%.webp}.png\"; done
@@ -84,23 +94,31 @@ impl Format {
 )]
 struct Args {
     /// Input image file
-    #[arg(short, long, value_name = "FILE")]
+    #[arg(short, long, value_name = "FILE", conflicts_with = "clipboard")]
     input: Option<PathBuf>,
 
     /// Output image file or directory
     #[arg(short, long, value_name = "FILE")]
     output: Option<PathBuf>,
 
+    /// Paste image from clipboard
+    #[arg(short = 'c', long)]
+    clipboard: bool,
+
     /// Output format (auto-detected from extension if not specified)
     #[arg(short, long, value_name = "FORMAT")]
     format: Option<Format>,
+
+    /// Extension for output file (use with -c for conversion)
+    #[arg(short = 'e', long, value_name = "EXT")]
+    extension: Option<String>,
 
     /// Quality for lossy formats like JPEG (1-100)
     #[arg(short, long, default_value = "90", value_name = "NUM")]
     quality: u8,
 
     /// Positional input file (alternative to -i)
-    #[arg(value_name = "INPUT")]
+    #[arg(value_name = "INPUT", conflicts_with = "clipboard")]
     pos_input: Option<PathBuf>,
 
     /// Positional output file (alternative to -o)
@@ -108,7 +126,7 @@ struct Args {
     pos_output: Option<PathBuf>,
 
     #[arg(short = 'V', long = "version", action = ArgAction::SetTrue)]
-    version: bool,
+    version: bool
 }
 
 fn main() -> Result<()> {
@@ -125,39 +143,64 @@ fn main() -> Result<()> {
         version.print_and_exit();
     }
 
-    // Determine input and output from either flags or positional args
-    let input = args.input
-        .or(args.pos_input)
-        .context("Input file is required. Usage: imgconv <input> <output>")?;
-
-    let output = args.output
-        .or(args.pos_output)
-        .context("Output file is required. Usage: imgconv <input> <output>")?;
-
     // Validate quality
     if args.quality == 0 || args.quality > 100 {
         anyhow::bail!("Quality must be between 1 and 100, got: {}", args.quality);
     }
 
-    // Validate input exists
-    if !input.exists() {
-        anyhow::bail!("Input file not found: {}", input.display());
-    }
+    // Determine input source: clipboard or file
+    let (img, detected_input_format) = if args.clipboard {
+        // Get from clipboard
+        print_info("Reading image from clipboard...");
+        get_image_from_clipboard()?
+    } else {
+        // Get from file
+        let input = args.input
+            .or(args.pos_input)
+            .context("Input file is required. Usage: imgconv <input> <output> OR imgconv -c <output>")?;
 
-    // Read image input
-    print_info(&format!("Reading image from: {}", input.display()));
-    let img = ImageReader::open(&input)
-        .with_context(|| format!("Failed to open input file: {}", input.display()))?
-        .with_guessed_format()
-        .with_context(|| format!("Failed to detect image format from: {}", input.display()))?
-        .decode()
-        .context("Failed to decode image")?;
+        // Validate input exists
+        if !input.exists() {
+            anyhow::bail!("Input file not found: {}", input.display());
+        }
+
+        // Read image input
+        print_info(&format!("Reading image from: {}", input.display()));
+        let reader = ImageReader::open(&input)
+            .with_context(|| format!("Failed to open input file: {}", input.display()))?
+            .with_guessed_format()
+            .with_context(|| format!("Failed to detect image format from: {}", input.display()))?;
+        
+        let detected_format = reader.format();
+        let img = reader.decode()
+            .context("Failed to decode image")?;
+        
+        (img, detected_format)
+    };
 
     let (width, height) = img.dimensions();
-    print_success(&format!("Image loaded: {}x{} pixels", width, height));
+    if let Some(fmt) = detected_input_format {
+        print_success(&format!("Image loaded: {}x{} pixels, format: {:?}", width, height, fmt));
+    } else {
+        print_success(&format!("Image loaded: {}x{} pixels", width, height));
+    }
 
-    // Determine output format
-    let (output_path, output_format) = determine_output(&output, args.format)?;
+    // Determine output path
+    let output = args.output
+        .or(args.pos_output)
+        .context("Output file is required. Usage: imgconv <input> <output> OR imgconv -c <output>")?;
+
+    // Determine output format with smart logic for clipboard mode
+    let (output_path, output_format) = if args.clipboard {
+        determine_output_from_clipboard(
+            &output, 
+            args.format, 
+            args.extension.as_deref(), 
+            detected_input_format
+        )?
+    } else {
+        determine_output(&output, args.format)?
+    };
 
     // Convert and save
     print_info(&format!("Converting to format: {:?}", output_format));
@@ -194,6 +237,113 @@ fn main() -> Result<()> {
 
     print_success(&format!("Successfully converted to: {}", output_path.display()));
     Ok(())
+}
+
+fn get_image_from_clipboard() -> Result<(DynamicImage, Option<ImageFormat>)> {
+    use arboard::Clipboard;
+    
+    let mut clipboard = Clipboard::new()
+        .context("Failed to access clipboard")?;
+    
+    let img_data = clipboard.get_image()
+        .context("No image found in clipboard. Please copy an image first.")?;
+    
+    // Convert RGBA to image format
+    let width = img_data.width;
+    let height = img_data.height;
+    let rgba_data = img_data.bytes;
+    
+    // Create DynamicImage from RGBA data
+    let img = image::RgbaImage::from_raw(width as u32, height as u32, rgba_data.to_vec())
+        .context("Failed to create image from clipboard data")?;
+    
+    let dynamic_img = DynamicImage::ImageRgba8(img);
+    
+    // Clipboard images are typically in PNG format
+    Ok((dynamic_img, Some(ImageFormat::Png)))
+}
+
+fn determine_output_from_clipboard(
+    output: &Path,
+    explicit_format: Option<Format>,
+    extension: Option<&str>,
+    detected_format: Option<ImageFormat>
+) -> Result<(PathBuf, ImageFormat)> {
+    // Priority:
+    // 1. -e flag (extension) with conversion
+    // 2. -f flag (format)
+    // 3. output file extension
+    // 4. detected format from clipboard
+    
+    if let Some(ext) = extension {
+        // User specified -e flag, convert to that format
+        let target_format = extension_to_format(ext)
+            .with_context(|| format!("Unknown extension: {}", ext))?;
+        
+        let mut output_path = output.to_path_buf();
+        
+        // If output has different extension, correct it
+        if let Some(current_ext) = output.extension() {
+            if current_ext.to_string_lossy().to_lowercase() != ext.to_lowercase() {
+                print_info(&format!(
+                    "Correcting extension from .{} to .{} (conversion mode)", 
+                    current_ext.to_string_lossy(), 
+                    ext
+                ));
+                output_path.set_extension(ext);
+            }
+        } else {
+            output_path.set_extension(ext);
+        }
+        
+        return Ok((output_path, target_format));
+    }
+    
+    if let Some(fmt) = explicit_format {
+        // User specified -f flag
+        let output_format = fmt.to_image_format();
+        let output_path = add_extension_if_needed(output, &fmt);
+        return Ok((output_path, output_format));
+    }
+    
+    // Check if output has extension
+    if let Some(output_ext) = output.extension() {
+        let ext_str = output_ext.to_string_lossy().to_lowercase();
+        
+        // Check if extension matches detected format
+        if let Some(detected) = detected_format {
+            let detected_ext = format_to_main_extension(&detected);
+            
+            if ext_str != detected_ext && ext_str != "jpg" && detected_ext != "jpeg" {
+                // Extension doesn't match, correct it
+                print_info(&format!(
+                    "Output extension .{} doesn't match clipboard format .{}, correcting...", 
+                    ext_str, 
+                    detected_ext
+                ));
+                
+                let mut corrected_path = output.to_path_buf();
+                corrected_path.set_extension(detected_ext);
+                return Ok((corrected_path, detected));
+            }
+        }
+        
+        // Try to detect format from output extension
+        if let Some(format_from_ext) = detect_format_from_path(output) {
+            return Ok((output.to_path_buf(), format_from_ext));
+        }
+    }
+    
+    // Fallback to detected format or PNG
+    let final_format = detected_format.unwrap_or(ImageFormat::Png);
+    let ext = format_to_main_extension(&final_format);
+    
+    let mut output_path = output.to_path_buf();
+    output_path.set_extension(ext);
+    
+    print_info(&format!("Auto-adding extension: .{}", ext));
+    
+    Ok((output_path, final_format))
 }
 
 fn determine_output(output: &Path, format: Option<Format>) -> Result<(PathBuf, ImageFormat)> {
@@ -249,6 +399,44 @@ fn format_to_extension(format: &Format) -> &str {
         Format::Dds => "dds",
         Format::Hdr => "hdr",
         Format::Farbfeld => "ff",
+    }
+}
+
+fn extension_to_format(ext: &str) -> Option<ImageFormat> {
+    match ext.to_lowercase().as_str() {
+        "png" => Some(ImageFormat::Png),
+        "jpg" | "jpeg" => Some(ImageFormat::Jpeg),
+        "gif" => Some(ImageFormat::Gif),
+        "bmp" => Some(ImageFormat::Bmp),
+        "ico" => Some(ImageFormat::Ico),
+        "tiff" | "tif" => Some(ImageFormat::Tiff),
+        "webp" => Some(ImageFormat::WebP),
+        "avif" => Some(ImageFormat::Avif),
+        "pnm" | "pbm" | "pgm" | "ppm" => Some(ImageFormat::Pnm),
+        "tga" => Some(ImageFormat::Tga),
+        "dds" => Some(ImageFormat::Dds),
+        "hdr" => Some(ImageFormat::Hdr),
+        "ff" => Some(ImageFormat::Farbfeld),
+        _ => None,
+    }
+}
+
+fn format_to_main_extension(format: &ImageFormat) -> &str {
+    match format {
+        ImageFormat::Png => "png",
+        ImageFormat::Jpeg => "jpg",
+        ImageFormat::Gif => "gif",
+        ImageFormat::Bmp => "bmp",
+        ImageFormat::Ico => "ico",
+        ImageFormat::Tiff => "tiff",
+        ImageFormat::WebP => "webp",
+        ImageFormat::Avif => "avif",
+        ImageFormat::Pnm => "pnm",
+        ImageFormat::Tga => "tga",
+        ImageFormat::Dds => "dds",
+        ImageFormat::Hdr => "hdr",
+        ImageFormat::Farbfeld => "ff",
+        _ => "png",
     }
 }
 

@@ -8,3 +8,9 @@ src/tmp*
 
 # Added entries (1 items)
 *subl*
+
+# Added entries (1 items)
+test/
+
+# Added entries (1 items)
+*.bat

@@ -4,7 +4,7 @@ bin = [
 
 [package]
 name = "imgconv"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 authors = [
     "Hadi Cahyadi <cumulus13@gmail.com>",
@@ -31,6 +31,7 @@ image = "0.25"
 anyhow = "1.0"
 colored = "2.1"
 clap-version-flag = "1.0.7"
+arboard = "3.6.1"
 
 [dependencies.clap]
 version = "4.5"
